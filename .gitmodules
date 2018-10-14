@@ -1,0 +1,3 @@
+[submodule "libcanard"]
+	path = lib/libcanard
+	url = https://github.com/UAVCAN/libcanard.git
