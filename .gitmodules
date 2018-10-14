@@ -1,3 +1,6 @@
 [submodule "libcanard"]
 	path = lib/libcanard
 	url = https://github.com/UAVCAN/libcanard.git
+[submodule "lib/dsdl"]
+	path = lib/dsdl
+	url = https://github.com/UAVCAN/dsdl.git
