@@ -57,3 +57,6 @@ CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake 
 example
+
+# Compiled DSDL definitions
+dsdl/
