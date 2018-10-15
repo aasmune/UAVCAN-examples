@@ -18,6 +18,12 @@
 #include <assert.h>
 #include <errno.h>
 
+// Serialized DSDL definitions
+#include "uavcan/protocol/NodeStatus.h"
+#include "uavcan/protocol/GetNodeInfo.h"
+#include "uavcan/protocol/SoftwareVersion.h"
+#include "uavcan/protocol/HardwareVersion.h"
+
 /*
  * Application constants
  */
@@ -29,26 +35,6 @@
  * Some useful constants defined by the UAVCAN specification.
  * Data type signature values can be easily obtained with the script show_data_type_info.py
  */
-#define UAVCAN_NODE_ID_ALLOCATION_DATA_TYPE_ID                      1
-#define UAVCAN_NODE_ID_ALLOCATION_DATA_TYPE_SIGNATURE               0x0b2a812620a11d40
-#define UAVCAN_NODE_ID_ALLOCATION_RANDOM_TIMEOUT_RANGE_USEC         400000UL
-#define UAVCAN_NODE_ID_ALLOCATION_REQUEST_DELAY_OFFSET_USEC         600000UL
-
-#define UAVCAN_NODE_STATUS_MESSAGE_SIZE                             7
-#define UAVCAN_NODE_STATUS_DATA_TYPE_ID                             341
-#define UAVCAN_NODE_STATUS_DATA_TYPE_SIGNATURE                      0x0f0868d0c1a7c6f1
-
-#define UAVCAN_NODE_HEALTH_OK                                       0
-#define UAVCAN_NODE_HEALTH_WARNING                                  1
-#define UAVCAN_NODE_HEALTH_ERROR                                    2
-#define UAVCAN_NODE_HEALTH_CRITICAL                                 3
-
-#define UAVCAN_NODE_MODE_OPERATIONAL                                0
-#define UAVCAN_NODE_MODE_INITIALIZATION                             1
-
-#define UAVCAN_GET_NODE_INFO_RESPONSE_MAX_SIZE                      ((3015 + 7) / 8)
-#define UAVCAN_GET_NODE_INFO_DATA_TYPE_SIGNATURE                    0xee468a8121c46a9e
-#define UAVCAN_GET_NODE_INFO_DATA_TYPE_ID                           1
 
 #define UNIQUE_ID_LENGTH_BYTES                                      16
 
@@ -62,8 +48,8 @@ static uint8_t canard_memory_pool[1024];            ///< Arena for memory alloca
 /*
  * Node status variables
  */
-static uint8_t node_health = UAVCAN_NODE_HEALTH_OK;
-static uint8_t node_mode   = UAVCAN_NODE_MODE_INITIALIZATION;
+static uint8_t node_health = UAVCAN_PROTOCOL_NODESTATUS_HEALTH_OK;
+static uint8_t node_mode   = UAVCAN_PROTOCOL_NODESTATUS_MODE_INITIALIZATION;
 
 
 static uint64_t getMonotonicTimestampUSec(void)
@@ -89,10 +75,9 @@ static void readUniqueID(uint8_t* out_uid)
     }
 }
 
-
-static void makeNodeStatusMessage(uint8_t buffer[UAVCAN_NODE_STATUS_MESSAGE_SIZE])
+static uavcan_protocol_NodeStatus populateNodeStatus() 
 {
-    memset(buffer, 0, UAVCAN_NODE_STATUS_MESSAGE_SIZE);
+    uavcan_protocol_NodeStatus node_status;
 
     static uint32_t started_at_sec = 0;
     if (started_at_sec == 0)
@@ -102,13 +87,72 @@ static void makeNodeStatusMessage(uint8_t buffer[UAVCAN_NODE_STATUS_MESSAGE_SIZE
 
     const uint32_t uptime_sec = (uint32_t)((getMonotonicTimestampUSec() / 1000000U) - started_at_sec);
 
-    /*
-     * Here we're using the helper for demonstrational purposes; in this simple case it could be preferred to
-     * encode the values manually.
-     */
-    canardEncodeScalar(buffer,  0, 32, &uptime_sec);
-    canardEncodeScalar(buffer, 32,  2, &node_health);
-    canardEncodeScalar(buffer, 34,  3, &node_mode);
+    node_status.uptime_sec = uptime_sec;
+    node_status.health = node_health;
+    node_status.mode = node_mode;
+    node_status.vendor_specific_status_code = 0;
+
+    return node_status;
+}
+
+static void makeNodeStatusMessage(uint8_t buffer[UAVCAN_PROTOCOL_NODESTATUS_MAX_SIZE], uint32_t* length)
+{
+    uavcan_protocol_NodeStatus node_status = populateNodeStatus();
+
+    (*length) = uavcan_protocol_NodeStatus_encode(&node_status, buffer);
+}
+
+static uavcan_protocol_SoftwareVersion populateSoftwareVersion() 
+{
+    uavcan_protocol_SoftwareVersion sw_version;
+
+    sw_version.major = APP_VERSION_MAJOR;
+    sw_version.minor = APP_VERSION_MINOR;
+    sw_version.vcs_commit = GIT_HASH;
+    sw_version.optional_field_flags = UAVCAN_PROTOCOL_SOFTWAREVERSION_OPTIONAL_FIELD_FLAG_VCS_COMMIT;
+
+    return sw_version;
+}
+
+static uavcan_protocol_HardwareVersion populateHardwareVersion() 
+{
+    uavcan_protocol_HardwareVersion hw_version;
+
+    hw_version.certificate_of_authenticity = calloc(0, sizeof(uint8_t));
+    hw_version.certificate_of_authenticity_len = 1;
+
+    uint8_t ID[16];
+    readUniqueID(ID);
+
+    memcpy(hw_version.unique_id, ID, 16);
+
+    return hw_version;
+}
+
+static uavcan_protocol_GetNodeInfoResponse populateNodeInfoResponse()
+{
+    uavcan_protocol_NodeStatus node_status = populateNodeStatus();
+    uavcan_protocol_SoftwareVersion sw_version = populateSoftwareVersion();
+    uavcan_protocol_HardwareVersion hw_version = populateHardwareVersion();
+
+    uavcan_protocol_GetNodeInfoResponse response;
+    response.status = node_status;
+    response.software_version = sw_version;
+    response.hardware_version = hw_version;
+    response.name_len = strlen(APP_NODE_NAME);
+
+    response.name = calloc(response.name_len, sizeof(char));
+    strcpy((char*) response.name, APP_NODE_NAME);
+    // memcpy(response.name, APP_NODE_NAME, response.name_len);
+
+    return response;    
+}
+
+static void makeNodeInfoResponse(uint8_t buffer[UAVCAN_PROTOCOL_GETNODEINFO_RESPONSE_MAX_SIZE], uint32_t* length)
+{
+    uavcan_protocol_GetNodeInfoResponse response = populateNodeInfoResponse();
+
+    (*length) = uavcan_protocol_GetNodeInfoResponse_encode(&response, buffer);
 }
 
 
@@ -120,48 +164,26 @@ static void onTransferReceived(CanardInstance* ins,
 {
 
     if ((transfer->transfer_type == CanardTransferTypeRequest) &&
-        (transfer->data_type_id == UAVCAN_GET_NODE_INFO_DATA_TYPE_ID))
+        (transfer->data_type_id == UAVCAN_PROTOCOL_GETNODEINFO_ID))
     {
         printf("GetNodeInfo request from %d\n", transfer->source_node_id);
 
-        uint8_t buffer[UAVCAN_GET_NODE_INFO_RESPONSE_MAX_SIZE];
-        memset(buffer, 0, UAVCAN_GET_NODE_INFO_RESPONSE_MAX_SIZE);
-
-        // NodeStatus
-        makeNodeStatusMessage(buffer);
-
-        // SoftwareVersion
-        buffer[7] = APP_VERSION_MAJOR;
-        buffer[8] = APP_VERSION_MINOR;
-        buffer[9] = 1;                          // Optional field flags, VCS commit is set
-        uint32_t u32 = GIT_HASH;
-        canardEncodeScalar(buffer, 80, 32, &u32);
-        // Image CRC skipped
-
-        // HardwareVersion
-        // Major skipped
-        // Minor skipped
-        readUniqueID(&buffer[24]);
-        // Certificate of authenticity skipped
-
-        // Name
-        const size_t name_len = strlen(APP_NODE_NAME);
-        memcpy(&buffer[41], APP_NODE_NAME, name_len);
-
-        const size_t total_size = 41 + name_len;
+        uint8_t buffer[UAVCAN_PROTOCOL_GETNODEINFO_RESPONSE_MAX_SIZE];
+        uint32_t length;
+        makeNodeInfoResponse(buffer, &length);
 
         /*
          * Transmitting; in this case we don't have to release the payload because it's empty anyway.
          */
         const int16_t resp_res = canardRequestOrRespond(ins,
                                                         transfer->source_node_id,
-                                                        UAVCAN_GET_NODE_INFO_DATA_TYPE_SIGNATURE,
-                                                        UAVCAN_GET_NODE_INFO_DATA_TYPE_ID,
+                                                        UAVCAN_PROTOCOL_GETNODEINFO_SIGNATURE,
+                                                        UAVCAN_PROTOCOL_GETNODEINFO_ID,
                                                         &transfer->transfer_id,
                                                         transfer->priority,
                                                         CanardResponse,
                                                         &buffer[0],
-                                                        (uint16_t)total_size);
+                                                        (uint16_t) length);
         if (resp_res <= 0)
         {
             (void)fprintf(stderr, "Could not respond to GetNodeInfo; error %d\n", resp_res);
@@ -185,12 +207,10 @@ static bool shouldAcceptTransfer(const CanardInstance* ins,
 {
     (void)source_node_id;
 
-    if( canardGetLocalNodeID(ins)) {} // Just to remove errors
-
     if ((transfer_type == CanardTransferTypeRequest) &&
-    (data_type_id == UAVCAN_GET_NODE_INFO_DATA_TYPE_ID))
+    (data_type_id == UAVCAN_PROTOCOL_GETNODEINFO_ID))
     {
-        *out_data_type_signature = UAVCAN_GET_NODE_INFO_DATA_TYPE_SIGNATURE;
+        *out_data_type_signature = UAVCAN_PROTOCOL_GETNODEINFO_SIGNATURE;
         return true;
     }
         
@@ -232,25 +252,26 @@ static void process1HzTasks(uint64_t timestamp_usec)
      * Transmitting the node status message periodically.
      */
     {
-        uint8_t buffer[UAVCAN_NODE_STATUS_MESSAGE_SIZE];
-        makeNodeStatusMessage(buffer);
+        uint8_t buffer[UAVCAN_PROTOCOL_NODESTATUS_MAX_SIZE];
+        uint32_t length;
+        makeNodeStatusMessage(buffer, &length);
 
         static uint8_t transfer_id;  // Note that the transfer ID variable MUST BE STATIC (or heap-allocated)!
 
         const int16_t bc_res = canardBroadcast(&canard,
-                                               UAVCAN_NODE_STATUS_DATA_TYPE_SIGNATURE,
-                                               UAVCAN_NODE_STATUS_DATA_TYPE_ID,
+                                               UAVCAN_PROTOCOL_NODESTATUS_SIGNATURE,
+                                               UAVCAN_PROTOCOL_NODESTATUS_ID,
                                                &transfer_id,
                                                CANARD_TRANSFER_PRIORITY_LOW,
                                                buffer,
-                                               UAVCAN_NODE_STATUS_MESSAGE_SIZE);
+                                               length);
         if (bc_res <= 0)
         {
             (void)fprintf(stderr, "Could not broadcast node status; error %d\n", bc_res);
         }
     }
 
-    node_mode = UAVCAN_NODE_MODE_OPERATIONAL;
+    node_mode = UAVCAN_PROTOCOL_NODESTATUS_MODE_OPERATIONAL;
 }
 
 

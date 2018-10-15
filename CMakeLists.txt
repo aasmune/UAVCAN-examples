@@ -15,15 +15,16 @@ exec_program("${PYTHON_EXECUTABLE}"
              ${CMAKE_CURRENT_SOURCE_DIR}
              ARGS "lib/libcanard/dsdl_compiler/libcanard_dsdlc --header_only --outdir dsdl/ lib/dsdl/uavcan/")
 
-include_directories(dsdl/uavcan)
+include_directories(dsdl)
 
 # Compiler configuration - supporting only Clang and GCC
-set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -std=c99   -Wall -Wextra -Werror -m32 -pedantic")
+set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -std=gnu11   -Wall -Wextra -Werror -m32 -pedantic -g")
 
 # C warnings
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wdouble-promotion -Wswitch-enum -Wfloat-equal -Wundef")
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wconversion -Wtype-limits")
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wsign-conversion -Wcast-align -Wmissing-declarations")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wtype-limits -Wno-error=unused-parameter")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wcast-align -Wmissing-declarations")
+
 
 # Example application
 exec_program("git"
