@@ -4,6 +4,11 @@ project(example)
 set(CMAKE_C_COMPILER gcc)
 find_package(PythonInterp 3 REQUIRED)
 
+# Check out submodules
+exec_program("git"
+             ${CMAKE_CURRENT_SOURCE_DIR}
+             ARGS "submodule update --init --recursive")
+
 
 # Libcanard
 include_directories(src)
@@ -18,7 +23,7 @@ exec_program("${PYTHON_EXECUTABLE}"
 include_directories(dsdl)
 
 # Compiler configuration - supporting only Clang and GCC
-set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -std=gnu11   -Wall -Wextra -Werror -m32 -pedantic -g")
+set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -std=c11   -Wall -Wextra -Werror -m32 -pedantic -g")
 
 # C warnings
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wdouble-promotion -Wswitch-enum -Wfloat-equal -Wundef")
