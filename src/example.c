@@ -30,6 +30,8 @@
 #define APP_VERSION_MAJOR                                           1
 #define APP_VERSION_MINOR                                           0
 #define APP_NODE_NAME                                               "org.revolve.uavcan.example"
+#define APP_CERTIFICATE_OF_AUTHENTICITY_LEN                         5
+uint8_t APP_CERTIFICATE_OF_AUTHENTICITY[] =                         {1, 2, 3, 4, 5};
 
 /*
  * Some useful constants defined by the UAVCAN specification.
@@ -50,6 +52,15 @@ static uint8_t canard_memory_pool[1024];            ///< Arena for memory alloca
  */
 static uint8_t node_health = UAVCAN_PROTOCOL_NODESTATUS_HEALTH_OK;
 static uint8_t node_mode   = UAVCAN_PROTOCOL_NODESTATUS_MODE_INITIALIZATION;
+
+/*
+ * UAVCAN messages
+ */
+static uavcan_protocol_NodeStatus           node_status;
+static uavcan_protocol_GetNodeInfoResponse  response;
+static uavcan_protocol_SoftwareVersion      sw_version; 
+static uavcan_protocol_HardwareVersion      hw_version; 
+
 
 
 static uint64_t getMonotonicTimestampUSec(void)
@@ -75,10 +86,8 @@ static void readUniqueID(uint8_t* out_uid)
     }
 }
 
-static uavcan_protocol_NodeStatus populateNodeStatus() 
+static void populateNodeStatus(uavcan_protocol_NodeStatus *node_status) 
 {
-    uavcan_protocol_NodeStatus node_status;
-
     static uint32_t started_at_sec = 0;
     if (started_at_sec == 0)
     {
@@ -87,72 +96,69 @@ static uavcan_protocol_NodeStatus populateNodeStatus()
 
     const uint32_t uptime_sec = (uint32_t)((getMonotonicTimestampUSec() / 1000000U) - started_at_sec);
 
-    node_status.uptime_sec = uptime_sec;
-    node_status.health = node_health;
-    node_status.mode = node_mode;
-    node_status.vendor_specific_status_code = 0;
-
-    return node_status;
+    node_status->uptime_sec = uptime_sec;
+    node_status->health = node_health;
+    node_status->mode = node_mode;
+    node_status->vendor_specific_status_code = 0xa5a5;
 }
 
-static void makeNodeStatusMessage(uint8_t buffer[UAVCAN_PROTOCOL_NODESTATUS_MAX_SIZE], uint32_t* length)
+static void makeNodeStatusMessage(uavcan_protocol_NodeStatus *node_status, uint8_t buffer[UAVCAN_PROTOCOL_NODESTATUS_MAX_SIZE], uint32_t* length)
 {
-    uavcan_protocol_NodeStatus node_status = populateNodeStatus();
+    populateNodeStatus(node_status);
 
-    (*length) = uavcan_protocol_NodeStatus_encode(&node_status, buffer);
+    (*length) = uavcan_protocol_NodeStatus_encode(node_status, buffer);
 }
 
-static uavcan_protocol_SoftwareVersion populateSoftwareVersion() 
+static void populateSoftwareVersion(uavcan_protocol_SoftwareVersion *sw_version) 
 {
-    uavcan_protocol_SoftwareVersion sw_version;
+    sw_version->major = APP_VERSION_MAJOR;
+    sw_version->minor = APP_VERSION_MINOR;
+    sw_version->vcs_commit = GIT_HASH;
+    sw_version->optional_field_flags = UAVCAN_PROTOCOL_SOFTWAREVERSION_OPTIONAL_FIELD_FLAG_VCS_COMMIT;
 
-    sw_version.major = APP_VERSION_MAJOR;
-    sw_version.minor = APP_VERSION_MINOR;
-    sw_version.vcs_commit = GIT_HASH;
-    sw_version.optional_field_flags = UAVCAN_PROTOCOL_SOFTWAREVERSION_OPTIONAL_FIELD_FLAG_VCS_COMMIT;
-
-    return sw_version;
 }
 
-static uavcan_protocol_HardwareVersion populateHardwareVersion() 
+static void populateHardwareVersion(uavcan_protocol_HardwareVersion * hw_version) 
 {
-    uavcan_protocol_HardwareVersion hw_version;
+    hw_version->certificate_of_authenticity = APP_CERTIFICATE_OF_AUTHENTICITY;
+    hw_version->certificate_of_authenticity_len = APP_CERTIFICATE_OF_AUTHENTICITY_LEN;
 
-    hw_version.certificate_of_authenticity = calloc(0, sizeof(uint8_t));
-    hw_version.certificate_of_authenticity_len = 1;
-
-    uint8_t ID[16];
+    uint8_t ID[UNIQUE_ID_LENGTH_BYTES];
     readUniqueID(ID);
 
-    memcpy(hw_version.unique_id, ID, 16);
-
-    return hw_version;
+    memcpy(hw_version->unique_id, ID, UNIQUE_ID_LENGTH_BYTES);
 }
 
-static uavcan_protocol_GetNodeInfoResponse populateNodeInfoResponse()
+static void populateNodeInfoResponse(uavcan_protocol_GetNodeInfoResponse *response,
+                                     uavcan_protocol_NodeStatus * node_status,
+                                     uavcan_protocol_SoftwareVersion *sw_version,
+                                     uavcan_protocol_HardwareVersion *hw_version)
 {
-    uavcan_protocol_NodeStatus node_status = populateNodeStatus();
-    uavcan_protocol_SoftwareVersion sw_version = populateSoftwareVersion();
-    uavcan_protocol_HardwareVersion hw_version = populateHardwareVersion();
+    populateNodeStatus(node_status);
+    populateSoftwareVersion(sw_version);
+    populateHardwareVersion(hw_version);
 
-    uavcan_protocol_GetNodeInfoResponse response;
-    response.status = node_status;
-    response.software_version = sw_version;
-    response.hardware_version = hw_version;
-    response.name_len = strlen(APP_NODE_NAME);
-
-    response.name = calloc(response.name_len, sizeof(char));
-    strcpy((char*) response.name, APP_NODE_NAME);
-    // memcpy(response.name, APP_NODE_NAME, response.name_len);
-
-    return response;    
+    
+    response->status = *node_status;
+    response->software_version = *sw_version;
+    response->hardware_version = *hw_version;
+    response->name_len = strlen(APP_NODE_NAME);
+    response->name = (uint8_t*) APP_NODE_NAME;  
 }
 
-static void makeNodeInfoResponse(uint8_t buffer[UAVCAN_PROTOCOL_GETNODEINFO_RESPONSE_MAX_SIZE], uint32_t* length)
+static void makeNodeInfoResponse(uavcan_protocol_GetNodeInfoResponse *response,
+                                 uavcan_protocol_NodeStatus * node_status,
+                                 uavcan_protocol_SoftwareVersion *sw_version,
+                                 uavcan_protocol_HardwareVersion *hw_version,
+                                 uint8_t buffer[UAVCAN_PROTOCOL_GETNODEINFO_RESPONSE_MAX_SIZE], 
+                                 uint32_t* length)
 {
-    uavcan_protocol_GetNodeInfoResponse response = populateNodeInfoResponse();
+    populateNodeInfoResponse(response,
+                             node_status,
+                             sw_version,
+                             hw_version);
 
-    (*length) = uavcan_protocol_GetNodeInfoResponse_encode(&response, buffer);
+    (*length) = uavcan_protocol_GetNodeInfoResponse_encode(response, buffer);
 }
 
 
@@ -170,7 +176,12 @@ static void onTransferReceived(CanardInstance* ins,
 
         uint8_t buffer[UAVCAN_PROTOCOL_GETNODEINFO_RESPONSE_MAX_SIZE];
         uint32_t length;
-        makeNodeInfoResponse(buffer, &length);
+        makeNodeInfoResponse(&response,
+                             &node_status,
+                             &sw_version,
+                             &hw_version,
+                             buffer, 
+                             &length);
 
         /*
          * Transmitting; in this case we don't have to release the payload because it's empty anyway.
@@ -254,7 +265,7 @@ static void process1HzTasks(uint64_t timestamp_usec)
     {
         uint8_t buffer[UAVCAN_PROTOCOL_NODESTATUS_MAX_SIZE];
         uint32_t length;
-        makeNodeStatusMessage(buffer, &length);
+        makeNodeStatusMessage(&node_status, buffer, &length);
 
         static uint8_t transfer_id;  // Note that the transfer ID variable MUST BE STATIC (or heap-allocated)!
 

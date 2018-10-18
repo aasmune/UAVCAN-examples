@@ -4,6 +4,11 @@ project(example)
 set(CMAKE_C_COMPILER gcc)
 find_package(PythonInterp 3 REQUIRED)
 
+# Check out submodules
+exec_program("git"
+             ${CMAKE_CURRENT_SOURCE_DIR}
+             ARGS "submodule update --init --recursive")
+
 
 # Libcanard
 set(SRC_PATH "src")
