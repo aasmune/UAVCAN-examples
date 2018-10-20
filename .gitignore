@@ -60,3 +60,5 @@ example
 
 # Compiled DSDL definitions
 dsdl/
+
+.vscode

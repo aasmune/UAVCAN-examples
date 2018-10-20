@@ -31,14 +31,8 @@
 #define APP_VERSION_MINOR                                           0
 #define APP_NODE_NAME                                               "org.revolve.uavcan.example"
 #define APP_CERTIFICATE_OF_AUTHENTICITY_LEN                         5
-uint8_t APP_CERTIFICATE_OF_AUTHENTICITY[] =                         {1, 2, 3, 4, 5};
-
-/*
- * Some useful constants defined by the UAVCAN specification.
- * Data type signature values can be easily obtained with the script show_data_type_info.py
- */
-
-#define UNIQUE_ID_LENGTH_BYTES                                      16
+static uint8_t APP_CERTIFICATE_OF_AUTHENTICITY[] =                         {1, 2, 3, 4, 5};
+static uint8_t NODE_ID;
 
 /*
  * Library instance.
@@ -80,9 +74,9 @@ static uint64_t getMonotonicTimestampUSec(void)
  */
 static void readUniqueID(uint8_t* out_uid)
 {
-    for (uint8_t i = 0; i < UNIQUE_ID_LENGTH_BYTES; i++)
+    for (uint8_t i = 0; i < UAVCAN_PROTOCOL_HARDWAREVERSION_UNIQUE_ID_LENGTH; i++)
     {
-        out_uid[i] = i;
+        out_uid[i] = i * NODE_ID;
     }
 }
 
@@ -120,13 +114,13 @@ static void populateSoftwareVersion(uavcan_protocol_SoftwareVersion *sw_version)
 
 static void populateHardwareVersion(uavcan_protocol_HardwareVersion * hw_version) 
 {
-    hw_version->certificate_of_authenticity = APP_CERTIFICATE_OF_AUTHENTICITY;
-    hw_version->certificate_of_authenticity_len = APP_CERTIFICATE_OF_AUTHENTICITY_LEN;
+    hw_version->certificate_of_authenticity.data = APP_CERTIFICATE_OF_AUTHENTICITY;
+    hw_version->certificate_of_authenticity.len = APP_CERTIFICATE_OF_AUTHENTICITY_LEN;
 
-    uint8_t ID[UNIQUE_ID_LENGTH_BYTES];
+    uint8_t ID[UAVCAN_PROTOCOL_HARDWAREVERSION_UNIQUE_ID_LENGTH];
     readUniqueID(ID);
 
-    memcpy(hw_version->unique_id, ID, UNIQUE_ID_LENGTH_BYTES);
+    memcpy(hw_version->unique_id, ID, UAVCAN_PROTOCOL_HARDWAREVERSION_UNIQUE_ID_LENGTH);
 }
 
 static void populateNodeInfoResponse(uavcan_protocol_GetNodeInfoResponse *response,
@@ -142,8 +136,8 @@ static void populateNodeInfoResponse(uavcan_protocol_GetNodeInfoResponse *respon
     response->status = *node_status;
     response->software_version = *sw_version;
     response->hardware_version = *hw_version;
-    response->name_len = strlen(APP_NODE_NAME);
-    response->name = (uint8_t*) APP_NODE_NAME;  
+    response->name.len = strlen(APP_NODE_NAME);
+    response->name.data = (uint8_t*) APP_NODE_NAME;  
 }
 
 static void makeNodeInfoResponse(uavcan_protocol_GetNodeInfoResponse *response,
@@ -357,10 +351,8 @@ int main(int argc, char** argv)
      */
     canardInit(&canard, canard_memory_pool, sizeof(canard_memory_pool), onTransferReceived, shouldAcceptTransfer, NULL);
 
-    // char *p;
-    // uint8_t local_node_id = (uint8_t) strtol(argv[2], &p, 10);
-    uint8_t local_node_id = (uint8_t) atoi(argv[2]);
-    canardSetLocalNodeID(&canard, local_node_id);
+    NODE_ID = (uint8_t) atoi(argv[2]);
+    canardSetLocalNodeID(&canard, NODE_ID);
     
     /*
      * Running the main loop.
